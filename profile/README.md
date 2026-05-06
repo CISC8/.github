@@ -34,7 +34,33 @@ up to T5 (full extension set). A single STRICT parameter gates whether
 unsupported encodings trap or execute as NOP, so one binary can run across the
 tier range.
 
-Target frequencies: 80-125 MHz on iCE40, 100-150 MHz on ECP5.
+Target frequencies on Tang Nano (Gowin 28nm): 27-40 MHz practical after
+place-and-route; theoretical ceiling ~150 MHz (BRAM-limited). Tang Nano 20K
+(12nm) reaches 50-80 MHz.
+
+The simulator runs on four hardware targets:
+
+| Board | MCU | Role |
+|-------|-----|------|
+| Luckfox Pico Mini B | Rockchip RV1103, Cortex-A7 @ 1.2 GHz, 64 MB DDR2 | Primary sim host; runs platform_posix unchanged |
+| RP2040-Matrix | RP2040, dual Cortex-M0+ @ 133 MHz, 264 KB SRAM | Bare-metal sim proof-of-concept |
+| T-Display | ESP32, dual LX6 @ 240 MHz, 320 KB SRAM + PSRAM | Portable sim with onboard ST7789 display and WiFi OTA |
+| ESP32-C3 OLED | ESP32-C3, RISC-V @ 160 MHz, 400 KB SRAM | WiFi OTA .ihex loader and debug terminal |
+
+The C simulator costs roughly 40 host instructions per simulated instruction
+(1-byte turbo ~20, 2-byte ~40, peripheral tick ~10 idle overhead). Estimated
+simulated throughput at --trace=0:
+
+| Board | Host IPC | Sim MIPS | Equiv. FPGA clock |
+|-------|----------|----------|-------------------|
+| Luckfox (Cortex-A7, OoO) | ~2.0 | ~50-60 | ~250-300 MHz |
+| T-Display (LX6 @ 240 MHz) | ~1.0 | ~6 | ~30 MHz |
+| ESP32-C3 (RISC-V @ 160 MHz) | ~1.0 | ~4 | ~20 MHz |
+| RP2040 (Cortex-M0+ @ 133 MHz) | ~0.9 | ~3 | ~15 MHz |
+
+"Equiv. FPGA clock" is the T1-tier FPGA frequency that would execute at the
+same MIPS (10 MIPS per 50 MHz for T1 blended workload).
+Luckfox is the only target fast enough for real-time interactive use.
 
 ## Co-processors
 
