@@ -36,7 +36,38 @@ tier range.
 
 Target frequencies: 80-125 MHz on iCE40, 100-150 MHz on ECP5.
 
-## Current State
+## Co-processors
+
+Three CISC8-adjacent engines share the bus and address space alongside any
+main core:
+
+**Tp (Protocol core)** -- cycle-deterministic bit-level I/O. Analogous to the
+RP2040 PIO. Up to 8 instances per main core. Each Tp runs a 2-byte-per-word
+CISC8 subset (turbo + G opcodes) with an inline wait field for precise
+inter-instruction timing. The main core pre-loads a program and timing
+constants into Tp via MMIO, then releases it; Tp runs to completion and
+signals via CORE_ENABLED. Used for SPI, I2C, 1-Wire, WS2812B, and custom
+protocols without interrupting the main core.
+
+**Tf (Forth core)** -- a T3-class CISC8 core with banking removed and F
+extension opcodes always active. Designed to run the eForth REPL standalone.
+The F extension compresses NEXT/DOCOL/EXIT to 1-2 bytes and 1-3 cycles via a
+dedicated RS SRAM port. Tf can be the sole execution engine (no main core
+needed); the main core, if present, activates it via CORE_ENABLED and then
+steps aside.
+
+**Tj (J1 co-processor)** -- a J1-derived inner interpreter for Forth compound
+word dispatch. Activated by the main core; handles colon-word bodies at 1 cycle
+per FIW vs 14 cycles on a T5 main core.
+
+| co-processor | LUT | FF | BRAM | purpose |
+|---|---|---|---|---|
+| Tp (no G) | 125-175 | ~88 | 0 | protocol offload |
+| Tp + G ext | 160-215 | ~96 | 0 | protocol + GPIO shift ops |
+| Tf | 443-513 | ~132 | 1 | standalone Forth REPL |
+| Tj | ~252 | ~96 | 2 | Forth inner interp offload |
+
+
 
 ### Assembler (asm/)
 
@@ -137,26 +168,39 @@ Run with stats and UART input:
     --stats
 ```
 
-## Repo Structure
-
-Five git repos, one per component:
-
-| path     | repo   | content                        |
-|----------|--------|--------------------------------|
-| `isa/`   | isa    | spec, ADRs, analysis           |
-| `sim/`   | sim    | C simulator                    |
-| `asm/`   | asm    | assembler                      |
-| `sdcc/`  | sdcc   | SDCC backend (archived)        |
-| `tools/` | tools  | shexec and build helpers       |
-| `www/`   | www    | project website                |
-
-ADRs live in `isa/adr/`. Next ADR number: 071.
-Index and template: `isa/adr/README.md`.
 
 ## LUT Budgets (reference)
 
-| configuration                      | LUT   | FF   | target            |
-|------------------------------------|-------|------|-------------------|
-| T0M + 2x TzGM                      | 315   | 170  | Tang Nano 1K      |
-| T5GM + 3x T3GM + 4x TzGM          | 1962  | 156  | Tang Nano 9K (23%) |
-| G extension overhead               | +21   | --   | per core          |
+Single-core, bare peripherals (UART + timer + GPIO). Divider included.
+
+| Config | Core | +Divider | +Periph | Total LUT | Device | Headroom |
+|--------|------|----------|---------|-----------|--------|----------|
+| T1 | 190-235 | 6-22 | 121 | 317-378 | Nano 1K (1,152) | 67-73% |
+| T2 | 240-295 | 6-22 | 121 | 367-438 | Nano 1K (1,152) | 62-68% |
+| T3 | 330-390 | 10-26 | 121 | 461-537 | Nano 4K (4,608) | 88-90% |
+| T4 (DSP MUL) | 330-400 | 10-26 | 121 | 461-547 | Nano 4K (4,608) | 88-90% |
+| T4 (LUT MUL) | 390-460 | 10-26 | 121 | 521-607 | Nano 4K (4,608) | 87-89% |
+| T5 | 450-530 | 10-26 | 121 | 581-677 | Nano 9K (8,640) | 92-93% |
+
+Tang Nano 9K has hard DSP blocks; use DSP MUL figure for T4 on that device.
+G extension adds +38 LUT per core.
+
+### Multicore (M extension)
+
+Multicore SMP is supported from T0 upward. The M extension adds a round-robin
+bus arbiter and per-pair mailbox registers. Cores share one bus; each sees a
+sequential-consistency memory model. Core 0 brings up additional cores via the
+CORE_ENABLED MMIO register.
+
+Bottom-up for 2-core configs, shared peripherals (UART + timer + GPIO):
+
+| Config | 2x Core | +Arbiter | +Divider | +Periph | Total LUT | Device |
+|--------|---------|----------|----------|---------|-----------|--------|
+| 2x T1 | 380-470 | 60-100 | 6-22 | 121 | 567-713 | Nano 4K (12-15%) |
+| 2x T2 | 480-590 | 60-100 | 6-22 | 121 | 667-833 | Nano 4K (14-18%) |
+| 4x T1 | 760-940 | 140-220 | 6-22 | 121 | 1027-1303 | Nano 9K (12-15%) |
+| 4x T2 | 960-1180 | 140-220 | 6-22 | 121 | 1227-1543 | Nano 9K (14-18%) |
+
+Arbiter cost: ~30-40 LUT base + ~15 LUT per additional core. Mailbox adds
+~5 LUT / ~17 FF per core pair. Each core gets its own divider tap (shared
+counter, no extra LUT). Peripherals counted once (shared bus).
